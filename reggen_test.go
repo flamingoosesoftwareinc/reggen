@@ -80,6 +80,52 @@ func TestSeed(t *testing.T) {
 
 }
 
+func TestGenerateWithLength(t *testing.T) {
+	cases := []struct {
+		regex  string
+		minLen int
+		maxLen int
+	}{
+		// Kendra IndexId pattern: exactly 36 chars
+		{`[a-zA-Z0-9][a-zA-Z0-9-]*`, 36, 36},
+		// Kendra ExperienceId: 1-36 chars
+		{`[a-zA-Z0-9][a-zA-Z0-9_-]*`, 1, 36},
+		// Simple digit pattern with exact length
+		{`\d+`, 10, 10},
+		// UUID-like uppercase
+		{`[0-9A-F]+`, 32, 32},
+		// Range
+		{`[a-z]+`, 5, 20},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.regex, func(t *testing.T) {
+			g, err := NewGenerator(tc.regex)
+			if err != nil {
+				t.Fatal("Error creating generator:", err)
+			}
+			g.SetSeed(42)
+
+			re, err := regexp.Compile(tc.regex)
+			if err != nil {
+				t.Fatal("Invalid regex:", err)
+			}
+
+			for i := 0; i < 100; i++ {
+				s := g.GenerateWithLength(tc.minLen, tc.maxLen)
+				n := len([]rune(s))
+				if n < tc.minLen || n > tc.maxLen {
+					t.Errorf("iteration %d: length %d not in [%d, %d], value=%q",
+						i, n, tc.minLen, tc.maxLen, s)
+				}
+				if !re.MatchString(s) {
+					t.Errorf("iteration %d: %q does not match %s", i, s, tc.regex)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkGenerate(b *testing.B) {
 	r, err := NewGenerator(`^[a-z]{5,10}@[a-z]+\.(com|net|org)$`)
 	if err != nil {

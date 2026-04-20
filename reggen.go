@@ -16,7 +16,8 @@ const printableChars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRST
 var printableCharsNoNL = printableChars[:len(printableChars)-2]
 
 type state struct {
-	limit int
+	limit    int
+	minTotal int // minimum total output length (0 = no minimum)
 }
 
 type Generator struct {
@@ -111,9 +112,18 @@ func (g *Generator) generate(s *state, re *syntax.Regexp) string {
 		}
 		return g.generate(s, re.Sub0[0])
 	case syntax.OpStar:
-		// Repeat zero or more times
+		// Repeat zero or more times.
+		// When minTotal is set, use it as a floor to bias toward the
+		// target length. The floor is approximate — other parts of the
+		// regex contribute length too, so the retry loop in
+		// GenerateWithLength handles the final length check.
 		res := ""
-		count := g.rand.Intn(s.limit + 1)
+		lo := 0
+		hi := s.limit
+		if s.minTotal > 0 && s.minTotal <= hi {
+			lo = g.rand.Intn(s.minTotal + 1)
+		}
+		count := lo + g.rand.Intn(hi-lo+1)
 		for i := 0; i < count; i++ {
 			for _, r := range re.Sub {
 				res += g.generate(s, r)
@@ -121,9 +131,14 @@ func (g *Generator) generate(s *state, re *syntax.Regexp) string {
 		}
 		return res
 	case syntax.OpPlus:
-		// Repeat one or more times
+		// Repeat one or more times.
 		res := ""
-		count := g.rand.Intn(s.limit) + 1
+		lo := 1
+		hi := s.limit
+		if s.minTotal > 1 && s.minTotal <= hi {
+			lo = 1 + g.rand.Intn(s.minTotal)
+		}
+		count := lo + g.rand.Intn(hi-lo+1)
 		for i := 0; i < count; i++ {
 			for _, r := range re.Sub {
 				res += g.generate(s, r)
@@ -186,6 +201,33 @@ func (g *Generator) generate(s *state, re *syntax.Regexp) string {
 // i.e. [0-9]+ will generate at most 10 characters if this is set to 10
 func (g *Generator) Generate(limit int) string {
 	return g.generate(&state{limit: limit}, g.re)
+}
+
+// DefaultMaxAttempts is the default number of attempts GenerateWithLength
+// makes before returning the best-effort result.
+const DefaultMaxAttempts = 100
+
+// GenerateWithLength generates a string matching the regex with a target
+// length between minLen and maxLen. Uses minLen as a repetition floor for
+// unbounded quantifiers (*, +) to bias generation toward the target length,
+// then retries if the output doesn't meet the constraints.
+func (g *Generator) GenerateWithLength(minLen, maxLen int) string {
+	return g.GenerateWithLengthN(minLen, maxLen, DefaultMaxAttempts)
+}
+
+// GenerateWithLengthN is like GenerateWithLength but allows specifying the
+// maximum number of attempts before returning the best-effort result.
+func (g *Generator) GenerateWithLengthN(minLen, maxLen, maxAttempts int) string {
+	for range maxAttempts {
+		s := g.generate(&state{limit: maxLen, minTotal: minLen}, g.re)
+		n := len([]rune(s))
+		if n >= minLen && n <= maxLen {
+			return s
+		}
+	}
+
+	// Fallback: return whatever we get (caller can retry externally).
+	return g.generate(&state{limit: maxLen, minTotal: minLen}, g.re)
 }
 
 // create a new generator
