@@ -96,11 +96,19 @@ func (g *Generator) generate(s *state, re *syntax.Regexp, b *strings.Builder) {
 		g.generate(s, re.Sub0[0], b)
 	case syntax.OpStar:
 		// Repeat zero or more times.
-		lo := 0
+		// Cap repetitions to avoid pathological blowup on patterns like
+		// `(-[\w]+)*` with limit=1011. The cap keeps generation O(cap)
+		// per quantifier regardless of the overall length limit.
 		hi := s.limit
+		if hi > 50 {
+			hi = 50
+		}
+
+		lo := 0
 		if s.minTotal > 0 && s.minTotal <= hi {
 			lo = g.rand.Intn(s.minTotal + 1)
 		}
+
 		count := lo + g.rand.Intn(hi-lo+1)
 		for i := 0; i < count; i++ {
 			for _, r := range re.Sub {
@@ -109,11 +117,16 @@ func (g *Generator) generate(s *state, re *syntax.Regexp, b *strings.Builder) {
 		}
 	case syntax.OpPlus:
 		// Repeat one or more times.
-		lo := 1
 		hi := s.limit
+		if hi > 50 {
+			hi = 50
+		}
+
+		lo := 1
 		if s.minTotal > 1 && s.minTotal <= hi {
 			lo = 1 + g.rand.Intn(s.minTotal)
 		}
+
 		count := lo + g.rand.Intn(hi-lo+1)
 		for i := 0; i < count; i++ {
 			for _, r := range re.Sub {

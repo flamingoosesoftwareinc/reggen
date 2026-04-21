@@ -143,3 +143,33 @@ func BenchmarkGenerate(b *testing.B) {
 		r.Generate(10)
 	}
 }
+
+func BenchmarkGenerateWithLength(b *testing.B) {
+	cases := []struct {
+		name    string
+		pattern string
+		minLen  int
+		maxLen  int
+	}{
+		{"simple_charclass_exact", `[a-zA-Z0-9][a-zA-Z0-9-]*`, 36, 36},
+		{"arn_pattern", `arn:aws(-[\w]+)*:[a-z0-9-\\.]{0,63}:[a-z0-9-\\.]{0,63}:[0-9]{12}:(service|vpc)/[A-Za-z0-9*-]+`, 1, 1011},
+		{"uuid", `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}`, 36, 36},
+		{"simple_bounded", `[A-Za-z0-9][A-Za-z0-9\-_]{3,31}`, 4, 32},
+		{"dot_star", `.*`, 0, 51200},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			g, err := NewGenerator(tc.pattern)
+			if err != nil {
+				b.Fatal(err)
+			}
+			g.SetSeed(42)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				g.GenerateWithLength(tc.minLen, tc.maxLen)
+			}
+		})
+	}
+}
