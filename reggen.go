@@ -160,8 +160,11 @@ func (g *Generator) Generate(limit int) string {
 }
 
 // DefaultMaxAttempts is the default number of attempts GenerateWithLength
-// makes before returning the best-effort result.
-const DefaultMaxAttempts = 100
+// makes before returning the best-effort result. Kept low to avoid
+// dominating CPU when many patterns are generated per spec — real-world
+// patterns with built-in quantifiers ({n,m}) usually hit on the first
+// few attempts.
+const DefaultMaxAttempts = 20
 
 // GenerateWithLength generates a string matching the regex with a target
 // length between minLen and maxLen. Uses minLen as a repetition floor for
