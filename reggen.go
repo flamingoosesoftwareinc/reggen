@@ -8,8 +8,11 @@ import (
 	"os"
 	"regexp/syntax"
 	"strings"
+	"sync"
 	"time"
 )
+
+var parseCache sync.Map // regex string → *syntax.Regexp
 
 const runeRangeEnd = 0x10ffff
 const printableChars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ \t\n\r"
@@ -208,12 +211,24 @@ func (g *Generator) GenerateWithLengthN(minLen, maxLen, maxAttempts int) string 
 	return b.String()
 }
 
-// create a new generator
+// NewGenerator creates a generator from a regex pattern. The parsed syntax
+// tree is cached so repeated calls with the same pattern skip re-parsing.
 func NewGenerator(regex string) (*Generator, error) {
-	re, err := syntax.Parse(regex, syntax.Perl)
-	if err != nil {
-		return nil, err
+	var re *syntax.Regexp
+
+	if cached, ok := parseCache.Load(regex); ok {
+		re = cached.(*syntax.Regexp)
+	} else {
+		var err error
+
+		re, err = syntax.Parse(regex, syntax.Perl)
+		if err != nil {
+			return nil, err
+		}
+
+		parseCache.Store(regex, re)
 	}
+
 	return &Generator{
 		re:   re,
 		rand: rand.New(rand.NewSource(time.Now().UnixNano())),
