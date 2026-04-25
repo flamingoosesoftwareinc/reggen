@@ -25,9 +25,58 @@ type state struct {
 }
 
 type Generator struct {
-	re    *syntax.Regexp
-	rand  *rand.Rand
-	debug bool
+	re           *syntax.Regexp
+	rand         *rand.Rand
+	debug        bool
+	allowedRunes [][2]rune // precomputed sorted [lo, hi] pairs; nil = no restriction
+}
+
+// SetAllowedRunes restricts which runes OpCharClass and OpAnyChar can
+// produce. Ranges from character classes (e.g., \s, \w, [a-z]) are
+// intersected with the allowed set so disallowed runes are never generated.
+// Pass nil to remove the restriction.
+func (g *Generator) SetAllowedRunes(ranges [][2]rune) {
+	g.allowedRunes = ranges
+}
+
+// clipRanges intersects re.Rune pairs with the allowed set.
+// Returns a new slice of [lo, hi] pairs containing only runes in both.
+func (g *Generator) clipRanges(reRunes []rune) [][2]rune {
+	if g.allowedRunes == nil {
+		// No restriction — convert re.Rune pairs as-is.
+		out := make([][2]rune, 0, len(reRunes)/2)
+		for i := 0; i < len(reRunes); i += 2 {
+			out = append(out, [2]rune{reRunes[i], reRunes[i+1]})
+		}
+		return out
+	}
+
+	var out [][2]rune
+	for i := 0; i < len(reRunes); i += 2 {
+		rLo, rHi := reRunes[i], reRunes[i+1]
+		for _, a := range g.allowedRunes {
+			lo := max(rLo, a[0])
+			hi := min(rHi, a[1])
+			if lo <= hi {
+				out = append(out, [2]rune{lo, hi})
+			}
+		}
+	}
+	return out
+}
+
+func max(a, b rune) rune {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b rune) rune {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (g *Generator) generate(s *state, re *syntax.Regexp, b *strings.Builder) {
@@ -40,22 +89,26 @@ func (g *Generator) generate(s *state, re *syntax.Regexp, b *strings.Builder) {
 			b.WriteRune(r)
 		}
 	case syntax.OpCharClass:
+		clipped := g.clipRanges(re.Rune)
+
 		// number of possible chars
 		sum := 0
-		for i := 0; i < len(re.Rune); i += 2 {
-			sum += int(re.Rune[i+1]-re.Rune[i]) + 1
-			if re.Rune[i+1] == runeRangeEnd {
-				sum = -1
+		unbounded := false
+		for _, p := range clipped {
+			if p[1] == runeRangeEnd {
+				unbounded = true
 				break
 			}
+			sum += int(p[1]-p[0]) + 1
 		}
-		// pick random char in range (inverse match group)
-		if sum == -1 {
+
+		// inverse match group (unbounded range end)
+		if unbounded {
 			possibleChars := []uint8{}
 			for j := 0; j < len(printableChars); j++ {
 				c := printableChars[j]
-				for i := 0; i < len(re.Rune); i += 2 {
-					if rune(c) >= re.Rune[i] && rune(c) <= re.Rune[i+1] {
+				for _, p := range clipped {
+					if rune(c) >= p[0] && rune(c) <= p[1] {
 						possibleChars = append(possibleChars, c)
 						break
 					}
@@ -65,30 +118,57 @@ func (g *Generator) generate(s *state, re *syntax.Regexp, b *strings.Builder) {
 				c := possibleChars[g.rand.Intn(len(possibleChars))]
 				b.WriteByte(c)
 			}
-
 			return
 		}
 
-		r := g.rand.Intn(int(sum))
+		if sum == 0 {
+			return
+		}
+
+		r := g.rand.Intn(sum)
 		var ru rune
-		sum = 0
-		for i := 0; i < len(re.Rune); i += 2 {
-			gap := int(re.Rune[i+1]-re.Rune[i]) + 1
-			if sum+gap > r {
-				ru = re.Rune[i] + rune(r-sum)
+		cumul := 0
+		for _, p := range clipped {
+			gap := int(p[1]-p[0]) + 1
+			if cumul+gap > r {
+				ru = p[0] + rune(r-cumul)
 				break
 			}
-			sum += gap
+			cumul += gap
 		}
 
 		b.WriteRune(ru)
 	case syntax.OpAnyCharNotNL, syntax.OpAnyChar:
-		chars := printableChars
-		if op == syntax.OpAnyCharNotNL {
-			chars = printableCharsNoNL
+		if g.allowedRunes != nil {
+			// Pick from allowed runes only.
+			sum := 0
+			for _, a := range g.allowedRunes {
+				sum += int(a[1]-a[0]) + 1
+			}
+			if sum > 0 {
+				r := g.rand.Intn(sum)
+				cumul := 0
+				for _, a := range g.allowedRunes {
+					gap := int(a[1]-a[0]) + 1
+					if cumul+gap > r {
+						ru := a[0] + rune(r-cumul)
+						if op == syntax.OpAnyCharNotNL && ru == '\n' {
+							ru = ' ' // fallback
+						}
+						b.WriteRune(ru)
+						break
+					}
+					cumul += gap
+				}
+			}
+		} else {
+			chars := printableChars
+			if op == syntax.OpAnyCharNotNL {
+				chars = printableCharsNoNL
+			}
+			c := chars[g.rand.Intn(len(chars))]
+			b.WriteByte(c)
 		}
-		c := chars[g.rand.Intn(len(chars))]
-		b.WriteByte(c)
 	case syntax.OpBeginLine:
 	case syntax.OpEndLine:
 	case syntax.OpBeginText:
