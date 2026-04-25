@@ -3,7 +3,6 @@ package reggen
 
 import (
 	"fmt"
-	"math"
 	"math/rand"
 	"os"
 	"regexp/syntax"
@@ -225,12 +224,18 @@ func (g *Generator) generate(s *state, re *syntax.Regexp, b *strings.Builder) {
 			}
 		}
 	case syntax.OpRepeat:
-		re.Max = int(math.Min(float64(re.Max), float64(s.limit)))
-		count := 0
-		if re.Max > re.Min {
-			count = g.rand.Intn(re.Max - re.Min + 1)
+		// Don't mutate the cached AST — copy min/max before capping.
+		repMin, repMax := re.Min, re.Max
+		if repMax > s.limit {
+			repMax = s.limit
 		}
-		for i := 0; i < re.Min || i < (re.Min+count); i++ {
+
+		count := 0
+		if repMax > repMin {
+			count = g.rand.Intn(repMax - repMin + 1)
+		}
+
+		for i := 0; i < repMin || i < (repMin+count); i++ {
 			for _, r := range re.Sub {
 				g.generate(s, r, b)
 			}

@@ -132,6 +132,45 @@ func TestGenerateWithLength(t *testing.T) {
 	}
 }
 
+// TestGenerateWithLength_NoLiteralQuantifiers reproduces a bug where reggen
+// leaks literal quantifier syntax (e.g., "{2,64}") into generated output.
+// Pattern: [-_a-zA-Z0-9]* with minLength=2, maxLength=64.
+// From AWS chime ClientRequestToken field.
+func TestGenerateWithLength_NoLiteralQuantifiers(t *testing.T) {
+	pattern := `[-_a-zA-Z0-9]*`
+	re := regexp.MustCompile(pattern)
+
+	gen, err := NewGenerator(pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for seed := int64(0); seed < 100; seed++ {
+		gen.SetSeed(seed)
+
+		s := gen.GenerateWithLength(2, 64)
+
+		if !re.MatchString(s) {
+			t.Errorf("seed %d: %q does not match pattern %s", seed, s, pattern)
+		}
+
+		if len(s) < 2 || len(s) > 64 {
+			t.Errorf("seed %d: len=%d outside [2,64] for %q", seed, len(s), s)
+		}
+
+		// The bug: reggen leaks literal quantifier syntax into output.
+		for _, bad := range []string{"{2,64}", "{1,", "{0,"} {
+			if len(s) >= len(bad) {
+				for i := 0; i <= len(s)-len(bad); i++ {
+					if s[i:i+len(bad)] == bad {
+						t.Errorf("seed %d: %q contains literal quantifier %q", seed, s, bad)
+					}
+				}
+			}
+		}
+	}
+}
+
 func BenchmarkGenerate(b *testing.B) {
 	r, err := NewGenerator(`^[a-z]{5,10}@[a-z]+\.(com|net|org)$`)
 	if err != nil {
