@@ -290,10 +290,18 @@ func (g *Generator) GenerateWithLengthN(minLen, maxLen, maxAttempts int) string 
 		}
 	}
 
-	// Fallback: return whatever we get.
+	// Fallback: generate one more and truncate to maxLen if needed.
+	// Truncation may break the pattern match, but exceeding maxLen is
+	// always wrong — callers rely on the length guarantee.
 	b.Reset()
 	g.generate(st, g.re, &b)
-	return b.String()
+
+	runes := []rune(b.String())
+	if maxLen > 0 && len(runes) > maxLen {
+		runes = runes[:maxLen]
+	}
+
+	return string(runes)
 }
 
 // NewGenerator creates a generator from a regex pattern. The parsed syntax
